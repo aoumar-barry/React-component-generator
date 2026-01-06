@@ -244,3 +244,300 @@ export async function generateComponent(description: string): Promise<string> {
   }
   return fullCode;
 }
+
+export async function validateUnitTestRequest(code: string): Promise<{ isValid: boolean; message?: string }> {
+  const client = initializeOpenAIClient();
+
+  const validationPrompt = `You are a validation assistant for a Unit Test Generator app. 
+Your task is to determine if the user's input contains code or is related to programming (programming languages, frameworks, code snippets, functions, classes, etc.).
+
+The app can generate unit tests for ANY code or code-related content. It accepts:
+- Code snippets in any programming language
+- Functions, classes, methods
+- Code blocks
+- Programming concepts (frameworks, libraries)
+- Any content that is code or code-related
+
+The app CANNOT handle:
+- General questions unrelated to code
+- Pure text without code elements
+- Non-programming content
+- Empty input
+
+IMPORTANT: If the input contains code or is related to programming (even partially), it's valid. Only reject if it's completely unrelated to code/programming.
+
+Respond with ONLY a JSON object in this exact format:
+{"isValid": true, "relevance": <number 0-100>} if the input contains code or is code-related
+{"isValid": false, "relevance": <number 0-100>, "message": "I can only generate unit tests from code snippets. Please paste your code to generate unit tests."} if the input is not code or code-related
+
+User input: "${code.substring(0, 500)}"
+
+Respond with ONLY the JSON, no additional text:`;
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are a JSON-only response assistant. Always respond with valid JSON only.' },
+        { role: 'user', content: validationPrompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 200,
+      response_format: { type: 'json_object' },
+    });
+
+    const response = completion.choices[0]?.message?.content;
+    if (!response) {
+      // Default to valid if we can't validate
+      return { isValid: true };
+    }
+
+    try {
+      const result = JSON.parse(response);
+      const relevance = result.relevance || 0;
+      // Check if relevance indicates this contains code or is code-related
+      const isValid = result.isValid === true && relevance >= 30;
+      return {
+        isValid,
+        message: result.message || (isValid ? undefined : "I can only generate unit tests from code snippets. Please paste your code to generate unit tests."),
+      };
+    } catch {
+      // Default to valid if JSON parsing fails
+      return { isValid: true };
+    }
+  } catch (error) {
+    // Default to valid if validation fails
+    return { isValid: true };
+  }
+}
+
+export async function* generateHelpfulResponseStreamForUnitTests(question: string): AsyncGenerator<string, void, unknown> {
+  const client = initializeOpenAIClient();
+
+  const systemPrompt = `You are an assistant for a Unit Test Generator app. 
+When users ask questions that are NOT about generating unit tests from code, you must:
+1. Politely inform them that this app can ONLY generate unit tests from code snippets
+2. Be direct and clear - do not provide lengthy explanations
+3. Encourage them to paste their code to generate unit tests
+
+Keep your response brief, clear, and focused. Maximum 2-3 sentences.`;
+
+  const userPrompt = `The user asked: "${question}"
+
+Respond by letting them know you can only generate unit tests from code snippets and ask them to paste their code.`;
+
+  try {
+    const stream = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 500,
+      stream: true,
+    });
+
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      if (content) {
+        yield content;
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`OpenAI API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while generating response');
+  }
+}
+
+export async function detectCodeLanguage(code: string): Promise<{ language: string; framework: string; displayName: string }> {
+  const client = initializeOpenAIClient();
+
+  const detectionPrompt = `You are a code language detector. Analyze the provided code and determine its programming language.
+
+Supported languages and their test frameworks:
+- JavaScript/TypeScript -> Jest
+- Python -> pytest
+- Java -> JUnit 5
+- C# -> xUnit
+- Go -> Testing
+- Ruby -> RSpec
+
+Respond with ONLY a JSON object in this exact format:
+{
+  "language": "<language_code>",
+  "framework": "<test_framework>",
+  "displayName": "<display_name>"
+}
+
+Language codes: "javascript", "typescript", "python", "java", "csharp", "go", "ruby"
+If you cannot determine the language, use "unknown".
+
+Code:
+\`\`\`
+${code.substring(0, 1000)}
+\`\`\`
+
+Respond with ONLY the JSON, no additional text:`;
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are a JSON-only response assistant. Always respond with valid JSON only.' },
+        { role: 'user', content: detectionPrompt },
+      ],
+      temperature: 0.1,
+      max_tokens: 100,
+      response_format: { type: 'json_object' },
+    });
+
+    const response = completion.choices[0]?.message?.content;
+    if (!response) {
+      throw new Error('No response from language detection');
+    }
+
+    try {
+      const result = JSON.parse(response);
+      return {
+        language: result.language || 'unknown',
+        framework: result.framework || 'Unknown',
+        displayName: result.displayName || 'Unknown',
+      };
+    } catch {
+      throw new Error('Failed to parse language detection response');
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Language detection error: ${error.message}`);
+    }
+    throw new Error('Unknown error during language detection');
+  }
+}
+
+export async function* generateUnitTestStream(
+  code: string,
+  language: string,
+  framework: string
+): AsyncGenerator<string, void, unknown> {
+  const client = initializeOpenAIClient();
+  const MAX_TOKENS = 1000;
+
+  const frameworkInstructions: Record<string, string> = {
+    'Jest': 'Use Jest with TypeScript/JavaScript. Include describe/it blocks, expect assertions, and proper imports.',
+    'pytest': 'Use pytest with Python. Include test functions starting with "test_", use assert statements, and import necessary modules.',
+    'JUnit 5': 'Use JUnit 5 with Java. Include @Test annotations, use Assertions class for assertions, and proper class structure.',
+    'xUnit': 'Use xUnit with C#. Include [Fact] or [Theory] attributes, use Assert class for assertions, and proper namespace structure.',
+    'Testing': 'Use Go testing package. Include test functions starting with "Test", use t.Run for subtests, and proper package declarations.',
+    'RSpec': 'Use RSpec with Ruby. Include describe/it blocks, use expect().to syntax, and proper require statements.',
+  };
+
+  const frameworkInstruction = frameworkInstructions[framework] || 'Generate appropriate unit tests for the given code.';
+
+  const systemPrompt = `You are an expert in writing unit tests. Generate comprehensive, production-ready unit tests using ${framework} for ${language} code.
+${frameworkInstruction}
+Return ONLY the test code, no explanations, no markdown code blocks, no additional text. 
+The tests should cover edge cases, error handling, and main functionality. Tests should be complete and runnable.`;
+
+  const userPrompt = `Generate unit tests using ${framework} for this ${language} code:
+
+\`\`\`${language}
+${code}
+\`\`\`
+
+Generate comprehensive unit tests that cover all functions, edge cases, and error scenarios.`;
+
+  try {
+    const stream = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 2000,
+      stream: true,
+    });
+
+    let fullCode = '';
+    let isFirstChunk = true;
+    let codeBlockStart = false;
+    let currentTokenCount = 0;
+    let limitReached = false;
+    
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      if (content) {
+        const chunkTokens = estimateTokens(content);
+        currentTokenCount += chunkTokens;
+        
+        if (currentTokenCount >= MAX_TOKENS && !limitReached) {
+          limitReached = true;
+          const remainingTokens = MAX_TOKENS - (currentTokenCount - chunkTokens);
+          if (remainingTokens > 0) {
+            const charsPerToken = content.length / chunkTokens;
+            const allowedChars = Math.floor(remainingTokens * charsPerToken);
+            if (allowedChars > 0) {
+              const partialContent = content.substring(0, allowedChars);
+              fullCode += partialContent;
+              
+              if (isFirstChunk && partialContent.trim().startsWith('```')) {
+                codeBlockStart = true;
+                const remaining = partialContent.replace(/^```[a-z]*\n?/i, '');
+                if (remaining) {
+                  yield remaining;
+                }
+              } else if (codeBlockStart) {
+                if (partialContent.includes('```')) {
+                  const cleaned = partialContent.replace(/```\s*$/, '');
+                  if (cleaned) {
+                    yield cleaned;
+                  }
+                } else {
+                  yield partialContent;
+                }
+              } else {
+                yield partialContent;
+              }
+            }
+          }
+          yield '\n\n[TOKEN_LIMIT_REACHED]';
+          break;
+        }
+        
+        if (!limitReached) {
+          fullCode += content;
+          
+          if (isFirstChunk && content.trim().startsWith('```')) {
+            codeBlockStart = true;
+            const remaining = content.replace(/^```[a-z]*\n?/i, '');
+            if (remaining) {
+              yield remaining;
+            }
+          } else if (codeBlockStart) {
+            if (content.includes('```')) {
+              const cleaned = content.replace(/```\s*$/, '');
+              if (cleaned) {
+                yield cleaned;
+              }
+              codeBlockStart = false;
+            } else {
+              yield content;
+            }
+          } else {
+            yield content;
+          }
+          
+          isFirstChunk = false;
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`OpenAI API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while generating unit tests');
+  }
+}

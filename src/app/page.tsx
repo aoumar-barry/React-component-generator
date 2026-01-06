@@ -1,10 +1,11 @@
 import ComponentGenerator from '@/components/ComponentGenerator';
+import SharedLayout from '@/components/SharedLayout';
 
 export default function Home() {
   return (
-    <main className="h-screen bg-[#1a1a1a] overflow-hidden">
+    <SharedLayout>
       <ComponentGenerator />
-    </main>
+    </SharedLayout>
   );
 }
 

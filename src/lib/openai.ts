@@ -541,3 +541,308 @@ Generate comprehensive unit tests that cover all functions, edge cases, and erro
     throw new Error('Unknown error occurred while generating unit tests');
   }
 }
+
+// SQL Query Optimizer Functions
+
+export async function validateSQLRequest(query: string): Promise<{ isValid: boolean; message?: string }> {
+  const client = initializeOpenAIClient();
+
+  const validationPrompt = `You are a validation assistant for a SQL Query Optimizer app.
+Your task is to determine if the user's request is AT LEAST 70% about SQL query optimization.
+The app can ONLY optimize SQL queries. It cannot:
+- Answer general questions
+- Generate non-SQL code
+- Provide tutorials
+- Optimize other types of queries
+
+IMPORTANT: The request must be at least 70% focused on SQL query optimization. If it's less than 70% related, it's invalid.
+
+Respond with ONLY a JSON object in this exact format:
+{"isValid": true, "relevance": <number 0-100>} if the request is at least 70% about SQL query optimization
+{"isValid": false, "relevance": <number 0-100>, "message": "I can only optimize SQL queries. Please provide a SQL query to optimize."} if the request is less than 70% about SQL query optimization
+
+User request: "${query.substring(0, 500)}"
+
+Respond with ONLY the JSON, no additional text:`;
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are a JSON-only response assistant. Always respond with valid JSON only.' },
+        { role: 'user', content: validationPrompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 200,
+      response_format: { type: 'json_object' },
+    });
+
+    const response = completion.choices[0]?.message?.content;
+    if (!response) {
+      return { isValid: true };
+    }
+
+    try {
+      const result = JSON.parse(response);
+      const relevance = result.relevance || 0;
+      const isValid = result.isValid === true && relevance >= 70;
+      return {
+        isValid,
+        message: result.message || (isValid ? undefined : "I can only optimize SQL queries. Please provide a SQL query to optimize."),
+      };
+    } catch {
+      return { isValid: true };
+    }
+  } catch (error) {
+    return { isValid: true };
+  }
+}
+
+export async function* optimizeSQLStream(query: string): AsyncGenerator<string, void, unknown> {
+  const client = initializeOpenAIClient();
+  const MAX_TOKENS = 1500;
+
+  const systemPrompt = `You are a SQL query optimization expert. Given the following SQL query, provide an optimized version.
+Focus on:
+- Index usage
+- Query performance
+- Best practices
+- Reducing execution time
+- Proper JOIN strategies
+- Subquery optimization
+
+Return ONLY the optimized SQL query, no explanations, no markdown code blocks, no additional text.`;
+
+  const userPrompt = `Optimize this SQL query:
+
+\`\`\`sql
+${query}
+\`\`\`
+
+Return ONLY the optimized SQL query:`;
+
+  try {
+    const stream = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 2000,
+      stream: true,
+    });
+
+    let fullCode = '';
+    let isFirstChunk = true;
+    let codeBlockStart = false;
+    let currentTokenCount = 0;
+    let limitReached = false;
+    let chunkCount = 0;
+    
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      
+      // Check if stream finished
+      if (chunk.choices[0]?.finish_reason) {
+        break;
+      }
+      
+      if (content) {
+        chunkCount++;
+        const chunkTokens = estimateTokens(content);
+        currentTokenCount += chunkTokens;
+        
+        if (currentTokenCount >= MAX_TOKENS && !limitReached) {
+          limitReached = true;
+          const remainingTokens = MAX_TOKENS - (currentTokenCount - chunkTokens);
+          if (remainingTokens > 0) {
+            const charsPerToken = content.length / chunkTokens;
+            const allowedChars = Math.floor(remainingTokens * charsPerToken);
+            if (allowedChars > 0) {
+              const partialContent = content.substring(0, allowedChars);
+              fullCode += partialContent;
+              
+              if (isFirstChunk && partialContent.trim().startsWith('```')) {
+                codeBlockStart = true;
+                const remaining = partialContent.replace(/^```[a-z]*\n?/i, '');
+                if (remaining) {
+                  yield remaining;
+                }
+              } else if (codeBlockStart) {
+                if (partialContent.includes('```')) {
+                  const cleaned = partialContent.replace(/```\s*$/, '');
+                  if (cleaned) {
+                    yield cleaned;
+                  }
+                } else {
+                  yield partialContent;
+                }
+              } else {
+                yield partialContent;
+              }
+            }
+          }
+          yield '\n\n[TOKEN_LIMIT_REACHED]';
+          break;
+        }
+        
+        if (!limitReached) {
+          fullCode += content;
+          
+          if (isFirstChunk && content.trim().startsWith('```')) {
+            codeBlockStart = true;
+            const remaining = content.replace(/^```[a-z]*\n?/i, '');
+            if (remaining) {
+              yield remaining;
+            }
+          } else if (codeBlockStart) {
+            if (content.includes('```')) {
+              const cleaned = content.replace(/```\s*$/, '');
+              if (cleaned) {
+                yield cleaned;
+              }
+              codeBlockStart = false;
+            } else {
+              yield content;
+            }
+          } else {
+            // Yield immediately for streaming
+            yield content;
+          }
+          
+          isFirstChunk = false;
+        }
+      }
+    }
+    
+    // Debug: log if no chunks were yielded
+    if (chunkCount === 0) {
+      console.error('No chunks received from OpenAI stream');
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`OpenAI API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while optimizing SQL');
+  }
+}
+
+export async function* generateHelpfulResponseStreamForSQL(query: string): AsyncGenerator<string, void, unknown> {
+  const client = initializeOpenAIClient();
+
+  const systemPrompt = `You are an assistant for a SQL Query Optimizer app. 
+When users ask questions that are NOT primarily about SQL query optimization (less than 70% related), you must:
+1. Politely inform them that this app can ONLY optimize SQL queries
+2. Be direct and clear - do not provide lengthy explanations or answer their unrelated question
+3. Encourage them to provide a SQL query to optimize
+
+Keep your response brief, clear, and focused. Maximum 2-3 sentences.`;
+
+  const userPrompt = `The user asked: "${query}"
+
+Respond by letting them know you can only optimize SQL queries and ask them to provide a SQL query.`;
+
+  try {
+    const stream = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 500,
+      stream: true,
+    });
+
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      if (content) {
+        yield content;
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`OpenAI API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while generating response');
+  }
+}
+
+export async function* generateSQLExplanationStream(
+  originalQuery: string,
+  optimizedQuery: string
+): AsyncGenerator<string, void, unknown> {
+  const client = initializeOpenAIClient();
+  const MAX_TOKENS = 1500;
+
+  const systemPrompt = `You are a SQL optimization expert. Compare the original and optimized queries.
+Provide detailed explanations in Markdown format covering:
+- What was changed
+- Why each change improves performance
+- Performance impact estimates
+- Best practices applied
+
+Use headers, bullet points, and code blocks for clarity.`;
+
+  const userPrompt = `Compare these SQL queries and explain the optimizations:
+
+Original Query:
+\`\`\`sql
+${originalQuery}
+\`\`\`
+
+Optimized Query:
+\`\`\`sql
+${optimizedQuery}
+\`\`\`
+
+Provide detailed explanations in Markdown format.`;
+
+  try {
+    const stream = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 2000,
+      stream: true,
+    });
+
+    let currentTokenCount = 0;
+    let limitReached = false;
+    
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      if (content) {
+        const chunkTokens = estimateTokens(content);
+        currentTokenCount += chunkTokens;
+        
+        if (currentTokenCount >= MAX_TOKENS && !limitReached) {
+          limitReached = true;
+          const remainingTokens = MAX_TOKENS - (currentTokenCount - chunkTokens);
+          if (remainingTokens > 0) {
+            const charsPerToken = content.length / chunkTokens;
+            const allowedChars = Math.floor(remainingTokens * charsPerToken);
+            if (allowedChars > 0) {
+              yield content.substring(0, allowedChars);
+            }
+          }
+          yield '\n\n[TOKEN_LIMIT_REACHED]';
+          break;
+        }
+        
+        if (!limitReached) {
+          yield content;
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`OpenAI API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while generating explanation');
+  }
+}

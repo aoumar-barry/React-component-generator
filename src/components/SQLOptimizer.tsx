@@ -19,6 +19,7 @@ export default function SQLOptimizer() {
   const [isValidationMessage, setIsValidationMessage] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [isFadingOut, setIsFadingOut] = useState(false);
+  const [isLeftSectionCollapsed, setIsLeftSectionCollapsed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { collapseSidebar } = useSidebar();
 
@@ -47,6 +48,9 @@ export default function SQLOptimizer() {
     
     // Set original query immediately (before transition)
     setOriginalQuery(sqlQuery.trim());
+    
+    // Clear the textarea
+    setSqlQuery('');
     
     // Wait for fade-out animation, then show new layout
     setTimeout(() => {
@@ -291,7 +295,9 @@ export default function SQLOptimizer() {
     <div className="w-full h-full flex flex-col overflow-hidden">
       {/* Title Bar - Only visible when submitted */}
       {hasSubmitted && (
-        <div className="flex-shrink-0 px-4 pt-4 pb-2 w-[70%] animate-slide-in-from-bottom">
+        <div className={`flex-shrink-0 px-4 pt-4 pb-2 transition-all duration-700 animate-slide-in-from-bottom ${
+          isLeftSectionCollapsed ? 'w-full' : 'w-[70%]'
+        }`}>
           <h1 className="text-3xl font-semibold text-white mb-2">
             SQL Query Optimizer
           </h1>
@@ -305,9 +311,25 @@ export default function SQLOptimizer() {
       <div className="flex-1 flex gap-6 px-4 pb-4 overflow-hidden relative">
         {/* Left Side - Explanations (70%) - Only visible when submitted */}
         {hasSubmitted && (
-          <div className="w-[70%] flex flex-col overflow-hidden animate-slide-in-from-left">
+          <div className={`flex flex-col overflow-hidden transition-all duration-700 ${
+            isLeftSectionCollapsed 
+              ? 'w-0 opacity-0 pointer-events-none' 
+              : 'w-[70%] animate-slide-in-from-left'
+          }`}>
             {/* Explanations Section (Top, scrollable) */}
             <div className="flex-1 overflow-y-auto px-4 mb-4">
+              {/* Original Query - Always shown in copyable zone */}
+              {originalQuery && (
+                <div className="mb-6 bg-[#2a2a2a] rounded-xl border border-[#3a3a3a] overflow-hidden shadow-sm">
+                  <div className="p-3 border-b border-[#3a3a3a] flex items-center justify-between">
+                    <h3 className="text-sm font-medium text-gray-400">Original Query</h3>
+                  </div>
+                  <div className="p-4">
+                    <CodeDisplay code={originalQuery} language="sql" />
+                  </div>
+                </div>
+              )}
+              
               {explanations ? (
                 <div className="prose prose-invert max-w-none">
                   <MarkdownRenderer content={explanations} />
@@ -356,8 +378,9 @@ export default function SQLOptimizer() {
                   onKeyDown={handleKeyPress}
                   placeholder="Paste your SQL query here... (Ctrl+Enter to optimize)"
                   disabled={isOptimizing}
-                  className="w-full h-64 bg-transparent text-white placeholder:text-gray-500 outline-none text-sm px-5 pt-5 pb-2 resize-none font-mono"
+                  className="w-full h-20 bg-transparent text-white placeholder:text-gray-500 outline-none text-sm px-5 pt-3 pb-2 resize-none font-mono"
                   style={{ lineHeight: '1.75' }}
+                  rows={3}
                 />
                 
                 {/* Footer with Controls */}
@@ -409,22 +432,42 @@ export default function SQLOptimizer() {
 
         {/* Right Side - Queries (30%) - Only visible when submitted */}
         {hasSubmitted && (
-          <div className="w-[30%] flex flex-col gap-4 animate-slide-in-from-right" style={{ animationDelay: '0.2s', animationFillMode: 'both' }}>
-            {/* Original Query - Not streamed, appears immediately */}
-            {originalQuery && (
-              <div className="bg-[#2a2a2a] rounded-2xl border border-[#3a3a3a] overflow-hidden flex flex-col shadow-2xl animate-slide-in-from-bottom" style={{ animationDelay: '0.4s', animationFillMode: 'both' }}>
-                <div className="p-4 border-b border-[#3a3a3a] flex-shrink-0">
-                  <h3 className="text-sm font-medium text-gray-400">Original Query</h3>
-                </div>
-                <div className="flex-1 overflow-hidden" style={{ maxHeight: '300px' }}>
-                  <CodeDisplay code={originalQuery} language="sql" />
-                </div>
-              </div>
-            )}
-
+          <div className={`flex flex-col gap-4 transition-all duration-700 ${
+            isLeftSectionCollapsed 
+              ? 'w-full animate-slide-in-from-right' 
+              : 'w-[30%] animate-slide-in-from-right'
+          }`} style={{ animationDelay: '0.2s', animationFillMode: 'both' }}>
             {/* Optimized Query - Streamed */}
             {(optimizedQuery || helpfulResponse || isOptimizing) && (
-              <div className="bg-[#2a2a2a] rounded-2xl border border-[#3a3a3a] overflow-hidden flex flex-col shadow-2xl flex-1 min-h-0">
+              <div className="bg-[#2a2a2a] rounded-2xl border border-[#3a3a3a] overflow-hidden flex flex-col shadow-2xl flex-1 min-h-0 relative">
+                {/* Collapse/Expand Button - Top Right */}
+                {!isOptimizing && (optimizedQuery || helpfulResponse) && (
+                  <button
+                    onClick={() => setIsLeftSectionCollapsed(!isLeftSectionCollapsed)}
+                    className="absolute top-4 right-4 z-20 bg-[#2a2a2a]/80 hover:bg-[#3a3a3a]/80 backdrop-blur-sm text-gray-400 hover:text-white rounded-lg p-2 border border-[#3a3a3a] hover:border-[#4a4a4a] transition-all duration-200 group"
+                    title={isLeftSectionCollapsed ? "Expand explanations area" : "Collapse to view full query"}
+                  >
+                    {isLeftSectionCollapsed ? (
+                      <svg 
+                        className="w-4 h-4 transition-transform group-hover:translate-x-0.5" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    ) : (
+                      <svg 
+                        className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    )}
+                  </button>
+                )}
                 {helpfulResponse ? (
                   <>
                     <div className="p-4 border-b border-[#3a3a3a] flex-shrink-0">

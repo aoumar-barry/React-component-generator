@@ -387,7 +387,7 @@ export default function NetworkTroubleshooting() {
                     type="button"
                     onClick={handleTroubleshoot}
                     disabled={isLoading || !description.trim()}
-                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors ml-auto"
+                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-100 flex items-center justify-center transition-colors ml-auto"
                     title="Troubleshoot Network"
                   >
                     <svg className="w-4 h-4 text-[#1a1a1a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -535,7 +535,7 @@ export default function NetworkTroubleshooting() {
                     type="button"
                     onClick={handleTroubleshoot}
                     disabled={isLoading || !description.trim()}
-                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors ml-auto"
+                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-100 flex items-center justify-center transition-colors ml-auto"
                     title="Troubleshoot Network"
                   >
                     <svg className="w-4 h-4 text-[#1a1a1a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">

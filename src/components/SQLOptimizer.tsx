@@ -417,7 +417,7 @@ export default function SQLOptimizer() {
                     type="button"
                     onClick={handleOptimize}
                     disabled={isOptimizing || !sqlQuery.trim()}
-                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors ml-auto"
+                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-100 flex items-center justify-center transition-colors ml-auto"
                     title="Optimize SQL"
                   >
                     <svg className="w-4 h-4 text-[#1a1a1a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -587,7 +587,7 @@ export default function SQLOptimizer() {
                     type="button"
                     onClick={handleOptimize}
                     disabled={isOptimizing || !sqlQuery.trim()}
-                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors ml-auto"
+                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-100 flex items-center justify-center transition-colors ml-auto"
                     title="Optimize SQL"
                   >
                     <svg className="w-4 h-4 text-[#1a1a1a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">

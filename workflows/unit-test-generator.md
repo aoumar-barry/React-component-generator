@@ -1,7 +1,5 @@
 # Unit Test Generator - Prompts de Développement
 
-Ce fichier contient tous les prompts utilisés pour développer l'outil Unit Test Generator.
-
 ---
 
 ## Phase 1 : Conception et Architecture Multi-Outils

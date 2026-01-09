@@ -32,11 +32,32 @@ Générateur de tests unitaires pour différents langages de programmation.
 - Streaming en temps réel
 - Interface cohérente avec la boîte à outils
 
-### 3. Tool 3
-🚧 À venir
+### 3. SQL Query Optimizer
+📁 [sql-query-optimizer.md](./sql-query-optimizer.md)
 
-### 4. Tool 4
-🚧 À venir
+Optimiseur de requêtes SQL avec explications détaillées.
+
+**Fonctionnalités :**
+- Optimisation de requêtes SQL
+- Explications markdown en streaming
+- Support OpenAI et Gemini
+- Validation des requêtes (70% de pertinence)
+- Streaming en temps réel
+- Limite de sécurité (1500 tokens)
+
+### 4. Dockerfile Generator
+📁 [dockerfile-generator.md](./dockerfile-generator.md)
+
+Générateur de Dockerfiles optimisés pour tous types d'applications.
+
+**Fonctionnalités :**
+- Génération de Dockerfiles optimisés
+- Support de tous types d'applications (Node.js, Python, Java, Go, etc.)
+- Optimisations : multi-stage builds, sécurité, cache
+- Support OpenAI et Gemini
+- Validation des requêtes (70% de pertinence)
+- Streaming en temps réel
+- Limite de sécurité (200 tokens)
 
 ### 5. Tool 5
 🚧 À venir
@@ -75,4 +96,6 @@ Ces fichiers servent de documentation pour :
 - Les traductions sont fournies pour faciliter la compréhension
 - Les actions réalisées sont décrites de manière détaillée
 - Les phases sont numérotées pour suivre la progression
+
+
 

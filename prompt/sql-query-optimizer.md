@@ -383,3 +383,6 @@ L'outil SQL Query Optimizer est maintenant complètement fonctionnel avec :
 - ✅ Limites de sécurité (1500 tokens)
 - ✅ Interface cohérente avec les autres outils
 
+
+
+https://accounts.google.com/TOS?loc=FR&hl=fr

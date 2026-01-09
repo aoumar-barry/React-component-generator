@@ -840,3 +840,476 @@ Provide detailed explanations in Markdown format.`;
     throw new Error('Unknown error occurred while generating explanation');
   }
 }
+
+// ==================== Dockerfile Generator Functions ====================
+
+export async function validateDockerfileRequest(description: string): Promise<{ isValid: boolean; message?: string }> {
+  const client = initializeGeminiClient();
+
+  const validationPrompt = `You are a validation assistant for a Dockerfile Generator app. 
+Your task is to determine if the user's request is AT LEAST 70% about generating a Dockerfile or containerization.
+
+The app can ONLY generate Dockerfiles. It cannot:
+- Answer general questions
+- Generate non-Dockerfile code
+- Provide explanations or tutorials
+- Generate docker-compose files, Kubernetes manifests, or other container orchestration files
+- Generate application code
+
+IMPORTANT: The request must be at least 70% focused on Dockerfile generation or containerization. If it's less than 70% related, it's invalid.
+
+Respond with ONLY a JSON object in this exact format:
+{"isValid": true, "relevance": <number 0-100>} if the request is at least 70% about Dockerfile generation
+{"isValid": false, "relevance": <number 0-100>, "message": "I can only generate Dockerfiles. Please describe your application or containerization needs."} if the request is less than 70% about Dockerfile generation
+
+User request: "${description}"
+
+Respond with ONLY the JSON, no additional text:`;
+
+  try {
+    const model = client.getGenerativeModel({ 
+      model: 'gemini-pro',
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 200,
+      },
+    });
+
+    const result = await model.generateContent(validationPrompt);
+    const response = result.response.text();
+
+    if (!response) {
+      return { isValid: true };
+    }
+
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const result = JSON.parse(jsonMatch[0]);
+        const relevance = result.relevance || 0;
+        const isValid = result.isValid === true && relevance >= 70;
+        return {
+          isValid,
+          message: result.message || (isValid ? undefined : "I can only generate Dockerfiles. Please describe your application or containerization needs."),
+        };
+      }
+      return { isValid: true };
+    } catch {
+      return { isValid: true };
+    }
+  } catch (error) {
+    return { isValid: true };
+  }
+}
+
+export async function* generateDockerfileStream(description: string): AsyncGenerator<string, void, unknown> {
+  const client = initializeGeminiClient();
+  const MAX_TOKENS = 200;
+
+  const systemPrompt = `You are an expert in Docker and containerization. Generate optimized, production-ready Dockerfiles.
+Focus on:
+- Multi-stage builds for smaller image sizes (when beneficial)
+- Proper layer caching
+- Security best practices (non-root user, minimal base images like alpine or distroless)
+- Efficient dependency installation
+- Health checks when appropriate
+- Proper WORKDIR and ENV usage
+- Build optimization
+
+Return ONLY the Dockerfile code, no explanations, no markdown code blocks, no additional text.
+The Dockerfile should be complete and production-ready.`;
+
+  const userPrompt = `Generate an optimized Dockerfile for: ${description}`;
+
+  try {
+    const model = client.getGenerativeModel({ 
+      model: 'gemini-pro',
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 500,
+      },
+    });
+
+    const prompt = `${systemPrompt}\n\n${userPrompt}`;
+    const result = await model.generateContentStream(prompt);
+    
+    let fullCode = '';
+    let isFirstChunk = true;
+    let codeBlockStart = false;
+    let currentTokenCount = 0;
+    let limitReached = false;
+    
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) {
+        const chunkTokens = estimateTokens(text);
+        currentTokenCount += chunkTokens;
+        
+        if (currentTokenCount >= MAX_TOKENS && !limitReached) {
+          limitReached = true;
+          const remainingTokens = MAX_TOKENS - (currentTokenCount - chunkTokens);
+          if (remainingTokens > 0) {
+            const charsPerToken = text.length / chunkTokens;
+            const allowedChars = Math.floor(remainingTokens * charsPerToken);
+            if (allowedChars > 0) {
+              const partialText = text.substring(0, allowedChars);
+              fullCode += partialText;
+              
+              if (isFirstChunk && partialText.trim().startsWith('```')) {
+                codeBlockStart = true;
+                const remaining = partialText.replace(/^```[a-z]*\n?/i, '');
+                if (remaining) {
+                  yield remaining;
+                }
+              } else if (codeBlockStart) {
+                if (partialText.includes('```')) {
+                  const cleaned = partialText.replace(/```\s*$/, '');
+                  if (cleaned) {
+                    yield cleaned;
+                  }
+                } else {
+                  yield partialText;
+                }
+              } else {
+                yield partialText;
+              }
+            }
+          }
+          yield '\n\n[TOKEN_LIMIT_REACHED]';
+          break;
+        }
+        
+        if (!limitReached) {
+          fullCode += text;
+          
+          if (isFirstChunk && text.trim().startsWith('```')) {
+            codeBlockStart = true;
+            const remaining = text.replace(/^```[a-z]*\n?/i, '');
+            if (remaining) {
+              yield remaining;
+            }
+          } else if (codeBlockStart) {
+            if (text.includes('```')) {
+              const cleaned = text.replace(/```\s*$/, '');
+              if (cleaned) {
+                yield cleaned;
+              }
+              codeBlockStart = false;
+            } else {
+              yield text;
+            }
+          } else {
+            yield text;
+          }
+          
+          isFirstChunk = false;
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Gemini API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while generating Dockerfile');
+  }
+}
+
+export async function* generateHelpfulResponseStreamForDockerfile(description: string): AsyncGenerator<string, void, unknown> {
+  const client = initializeGeminiClient();
+
+  const systemPrompt = `You are an assistant for a Dockerfile Generator app. 
+When users ask questions that are NOT primarily about generating Dockerfiles (less than 70% related), you must:
+1. Politely inform them that this app can ONLY generate Dockerfiles
+2. Be direct and clear - do not provide lengthy explanations or answer their unrelated question
+3. Encourage them to describe their application or containerization needs
+
+Keep your response brief, clear, and focused. Maximum 2-3 sentences.`;
+
+  const userPrompt = `The user asked: "${description}"
+
+Respond by letting them know you can only generate Dockerfiles and ask them to describe their application or containerization needs.`;
+
+  try {
+    const model = client.getGenerativeModel({ 
+      model: 'gemini-pro',
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 300,
+      },
+    });
+
+    const prompt = `${systemPrompt}\n\n${userPrompt}`;
+    const result = await model.generateContentStream(prompt);
+    
+    let currentTokenCount = 0;
+    const MAX_TOKENS = 200;
+    let limitReached = false;
+    
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) {
+        const chunkTokens = estimateTokens(text);
+        currentTokenCount += chunkTokens;
+        
+        if (currentTokenCount >= MAX_TOKENS && !limitReached) {
+          limitReached = true;
+          const remainingTokens = MAX_TOKENS - (currentTokenCount - chunkTokens);
+          if (remainingTokens > 0) {
+            const charsPerToken = text.length / chunkTokens;
+            const allowedChars = Math.floor(remainingTokens * charsPerToken);
+            if (allowedChars > 0) {
+              yield text.substring(0, allowedChars);
+            }
+          }
+          yield '\n\n[TOKEN_LIMIT_REACHED]';
+          break;
+        }
+        
+        if (!limitReached) {
+          yield text;
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Gemini API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while generating response');
+  }
+}
+
+// Network Troubleshooting Functions
+
+export async function validateNetworkTroubleshootingRequest(description: string): Promise<{ isValid: boolean; message?: string }> {
+  const client = initializeGeminiClient();
+
+  const validationPrompt = `You are a validation assistant for a Network Troubleshooting Assistant app. 
+Your task is to determine if the user's request is AT LEAST 50% about network troubleshooting.
+
+The app can help with ALL types of network problems:
+- Connectivity issues (ping, traceroute, DNS)
+- Latency and performance problems
+- Network configuration (IP, subnet, gateway)
+- Port and service issues
+- Firewall and security problems
+- Any network-related troubleshooting
+
+The app can accept any kind of input:
+- Text descriptions of network problems
+- Network commands
+- IP addresses or domains with issues
+- Any network-related query
+
+IMPORTANT: The request must be at least 50% focused on network troubleshooting. If it's less than 50% related, it's invalid.
+
+Respond with ONLY a JSON object in this exact format:
+{"isValid": true, "relevance": <number 0-100>} if the request is at least 50% about network troubleshooting
+{"isValid": false, "relevance": <number 0-100>, "message": "I can only help with network troubleshooting. Please describe a network problem you're experiencing."} if the request is less than 50% about network troubleshooting
+
+User request: "${description}"
+
+Respond with ONLY the JSON, no additional text:`;
+
+  try {
+    const model = client.getGenerativeModel({ 
+      model: 'gemini-pro',
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 200,
+      },
+    });
+
+    const result = await model.generateContent(validationPrompt);
+    const response = result.response.text();
+
+    if (!response) {
+      return { isValid: true };
+    }
+
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const result = JSON.parse(jsonMatch[0]);
+        const relevance = result.relevance || 0;
+        const isValid = result.isValid === true && relevance >= 50;
+        return {
+          isValid,
+          message: result.message || (isValid ? undefined : "I can only help with network troubleshooting. Please describe a network problem you're experiencing."),
+        };
+      }
+      return { isValid: true };
+    } catch {
+      return { isValid: true };
+    }
+  } catch (error) {
+    return { isValid: true };
+  }
+}
+
+export async function* generateNetworkTroubleshootingStream(description: string): AsyncGenerator<string, void, unknown> {
+  const client = initializeGeminiClient();
+  const MAX_TOKENS = 2000;
+
+  const systemPrompt = `You are an expert network and system administrator specializing in network troubleshooting.
+When a user describes a network problem, provide a comprehensive troubleshooting guide that includes:
+
+1. **Diagnostic of the issue**: Analyze the problem and identify potential causes
+2. **Step-by-step troubleshooting commands**: Provide actual network commands (ping, traceroute, nslookup, netstat, etc.) that the user can run
+3. **Explanations**: Explain what each command does and what the results mean
+4. **Recommended solutions**: Provide actionable solutions based on the diagnosis
+5. **Best practices**: Include relevant network best practices
+
+Format your response in Markdown with:
+- Headers (##) for main sections
+- Code blocks (\`\`\`) for commands (use appropriate language tags like bash, powershell, etc.)
+- Bullet points for steps and lists
+- Clear explanations in paragraphs
+- Bold text for important points
+
+Return ONLY the troubleshooting guide in Markdown format, no additional text, no meta-commentary.`;
+
+  const userPrompt = `Provide a comprehensive network troubleshooting guide for the following issue: ${description}`;
+
+  try {
+    const model = client.getGenerativeModel({ 
+      model: 'gemini-pro',
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 3000, // Max tokens for the model, actual output limited by MAX_TOKENS constant
+      },
+    });
+
+    const prompt = `${systemPrompt}\n\n${userPrompt}`;
+    const result = await model.generateContentStream(prompt);
+    
+    let currentTokenCount = 0;
+    let limitReached = false;
+    
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) {
+        const chunkTokens = estimateTokens(text);
+        currentTokenCount += chunkTokens;
+        
+        if (currentTokenCount >= MAX_TOKENS && !limitReached) {
+          limitReached = true;
+          const remainingTokens = MAX_TOKENS - (currentTokenCount - chunkTokens);
+          if (remainingTokens > 0) {
+            const charsPerToken = text.length / chunkTokens;
+            const allowedChars = Math.floor(remainingTokens * charsPerToken);
+            if (allowedChars > 0) {
+              yield text.substring(0, allowedChars);
+            }
+          }
+          yield '\n\n[TOKEN_LIMIT_REACHED]';
+          break;
+        }
+        
+        if (!limitReached) {
+          yield text;
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Gemini API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while generating network troubleshooting guide');
+  }
+}
+
+export async function* generateHelpfulResponseStreamForNetwork(description: string): AsyncGenerator<string, void, unknown> {
+  const client = initializeGeminiClient();
+
+  const systemPrompt = `You are an assistant for a Network Troubleshooting Assistant app. 
+When users ask questions that are NOT primarily about network troubleshooting (less than 50% related), you must:
+1. Politely inform them that this app can ONLY help with network troubleshooting
+2. Be direct and clear - do not provide lengthy explanations or answer their unrelated question
+3. Encourage them to describe a network problem they're experiencing
+
+Keep your response brief, clear, and focused. Maximum 2-3 sentences.`;
+
+  const userPrompt = `The user asked: "${description}"
+
+Respond by letting them know you can only help with network troubleshooting and ask them to describe a network problem.`;
+
+  try {
+    const model = client.getGenerativeModel({ 
+      model: 'gemini-pro',
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 500,
+      },
+    });
+
+    const prompt = `${systemPrompt}\n\n${userPrompt}`;
+    const result = await model.generateContentStream(prompt);
+    
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) {
+        yield text;
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Gemini API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while generating response');
+  }
+}
+
+export async function* extractNetworkCodeStream(troubleshootingGuide: string): AsyncGenerator<string, void, unknown> {
+  const client = initializeGeminiClient();
+
+  const systemPrompt = `You are a code extraction assistant for network troubleshooting guides.
+Your task is to extract ONLY the executable code/commands from a network troubleshooting guide.
+
+Extract:
+- Network commands (ping, traceroute, nslookup, netstat, ipconfig, ifconfig, etc.)
+- Configuration scripts (bash, powershell, batch, etc.)
+- Configuration files content (if applicable)
+- Any executable code blocks that can be copied and run
+
+DO NOT extract:
+- Explanatory text
+- Comments that are not part of code
+- Markdown formatting
+- Headers or descriptions
+
+Format the output as clean, ready-to-copy code blocks. If there are multiple code blocks, separate them clearly.
+If no executable code is found, return an empty string.
+
+Return ONLY the code, no explanations, no markdown code block markers (\`\`\`), no additional text.`;
+
+  const userPrompt = `Extract all executable code/commands from this network troubleshooting guide:
+
+${troubleshootingGuide}
+
+Return only the code that can be copied and executed.`;
+
+  try {
+    const model = client.getGenerativeModel({ 
+      model: 'gemini-pro',
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 2000,
+      },
+    });
+
+    const prompt = `${systemPrompt}\n\n${userPrompt}`;
+    const result = await model.generateContentStream(prompt);
+    
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) {
+        yield text;
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Gemini API error: ${error.message}`);
+    }
+    throw new Error('Unknown error occurred while extracting code');
+  }
+}

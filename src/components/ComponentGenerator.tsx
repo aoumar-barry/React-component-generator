@@ -29,6 +29,9 @@ export default function ComponentGenerator() {
       return;
     }
 
+    // Save the description before clearing
+    const descriptionToSend = description.trim();
+
     // Collapse sidebar when generating
     collapseSidebar();
 
@@ -38,6 +41,9 @@ export default function ComponentGenerator() {
     setGeneratedCode('');
     setHelpfulResponse('');
     setTokenLimitReached(false);
+    
+    // Clear the input field
+    setDescription('');
 
     try {
       const response = await fetch('/api/generate', {
@@ -46,7 +52,7 @@ export default function ComponentGenerator() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          description: description.trim(),
+          description: descriptionToSend,
           provider: selectedProvider,
         }),
       });
